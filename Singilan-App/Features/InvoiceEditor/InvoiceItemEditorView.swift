@@ -71,7 +71,9 @@ struct InvoiceItemEditorView: View {
             if enabled {
                 item.isServiceCharge = nil
                 item.price = -abs(item.price)
+                item.shares = participants.count == 1 ? [participants[0]: true] : [:]
                 item.payments = [:]
+                item.weights = nil
             } else {
                 item.price = abs(item.price)
             }
