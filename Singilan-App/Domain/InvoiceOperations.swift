@@ -1,6 +1,31 @@
 import Foundation
 
 enum InvoiceOperations {
+    static func applyingServiceCharge(percent: Decimal, to source: Invoice) -> Invoice {
+        var invoice = source
+        invoice.items.removeAll { $0.isService }
+        guard percent > 0, invoice.regularSubtotal > 0 else { return invoice }
+
+        var regularInvoice = invoice
+        regularInvoice.items = invoice.items.filter { !$0.isCreditLine }
+        let regularBalances = BillSplitter.balances(for: regularInvoice)
+        let shares = regularBalances.reduce(into: [String: Bool]()) { result, balance in
+            result[balance.userID] = balance.owed > 0
+        }
+        let weights = regularBalances.reduce(into: [String: Decimal]()) { result, balance in
+            if balance.owed > 0 { result[balance.userID] = balance.owed }
+        }
+
+        invoice.items.append(InvoiceItem(
+            name: "Service charge",
+            price: invoice.regularSubtotal * percent / 100,
+            shares: shares,
+            isServiceCharge: true,
+            weights: weights
+        ))
+        return invoice
+    }
+
     static func duplicate(_ invoice: Invoice, now: Date = .now) -> Invoice {
         var copy = invoice
         copy.id = UUID().uuidString

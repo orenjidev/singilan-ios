@@ -5,6 +5,7 @@ struct InvoiceListView: View {
     @EnvironmentObject private var accountStore: AccountStore
     @State private var isCreatingInvoice = false
     @State private var isShowingAccount = false
+    @State private var invoicePendingDeletion: Invoice?
 
     var body: some View {
         NavigationStack {
@@ -48,6 +49,10 @@ struct InvoiceListView: View {
                                 InvoiceRow(invoice: invoice, needsSync: true)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Duplicate", systemImage: "plus.square.on.square") { invoiceStore.duplicate(invoice) }
+                                Button("Delete", systemImage: "trash", role: .destructive) { invoicePendingDeletion = invoice }
+                            }
                             if invoice.id != invoiceStore.invoices.last?.id { SingilanDivider() }
                         }
                             }
@@ -90,6 +95,22 @@ struct InvoiceListView: View {
                 Button("OK") { invoiceStore.errorMessage = nil }
             } message: {
                 Text(invoiceStore.errorMessage ?? "Unknown error")
+            }
+            .confirmationDialog(
+                "Delete \(invoicePendingDeletion?.title ?? "invoice")?",
+                isPresented: Binding(
+                    get: { invoicePendingDeletion != nil },
+                    set: { if !$0 { invoicePendingDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete invoice", role: .destructive) {
+                    if let invoicePendingDeletion { invoiceStore.delete(invoicePendingDeletion) }
+                    invoicePendingDeletion = nil
+                }
+                Button("Cancel", role: .cancel) { invoicePendingDeletion = nil }
+            } message: {
+                Text("The deletion will be sent to cloud backup during the next sync.")
             }
         }
     }

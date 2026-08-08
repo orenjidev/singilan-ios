@@ -11,6 +11,7 @@ protocol CloudInvoiceServicing: Sendable {
     func getAll() async throws -> [Invoice]
     func create(_ invoice: Invoice) async throws -> Invoice
     func update(_ invoice: Invoice) async throws -> Invoice
+    func delete(id: String) async throws
 }
 
 final class LocalInvoiceRepository: InvoiceRepository {
@@ -27,6 +28,10 @@ final class LocalInvoiceRepository: InvoiceRepository {
         encoder.dateEncodingStrategy = .iso8601
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+    }
+
+    convenience init(scope: String) {
+        self.init(fileURL: Self.fileURL(for: scope))
     }
 
     func getAll() throws -> [Invoice] {
@@ -71,30 +76,50 @@ final class LocalInvoiceRepository: InvoiceRepository {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appending(path: "SingilanNa/invoices.json")
     }
+
+    private static func fileURL(for scope: String) -> URL {
+        guard scope != InvoiceStore.guestScope else { return defaultFileURL }
+        let safeScope = scope.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "account"
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appending(path: "SingilanNa/accounts/\(safeScope)/invoices.json")
+    }
 }
 
 @MainActor
 final class InvoiceStore: ObservableObject {
+    private struct HistorySnapshot {
+        let invoices: [Invoice]
+        let tombstones: Set<String>
+    }
     @Published private(set) var invoices: [Invoice] = []
     @Published var errorMessage: String?
     @Published private(set) var isSyncing = false
     @Published private(set) var lastSyncAt: Date?
-    private let repository: any InvoiceRepository
-    private var undoStack: [[Invoice]] = []
-    private var redoStack: [[Invoice]] = []
+    nonisolated static let guestScope = "guest"
+    private var repository: any InvoiceRepository
+    private(set) var scope: String
+    private var tombstoneURL: URL?
+    private var undoStack: [HistorySnapshot] = []
+    private var redoStack: [HistorySnapshot] = []
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
     init() {
-        repository = LocalInvoiceRepository()
+        scope = Self.guestScope
+        repository = LocalInvoiceRepository(scope: Self.guestScope)
+        tombstoneURL = nil
         reload()
     }
 
-    init(repository: any InvoiceRepository) {
+    init(repository: any InvoiceRepository, scope: String = InvoiceStore.guestScope, tombstoneURL: URL? = nil) {
         self.repository = repository
+        self.scope = scope
+        self.tombstoneURL = tombstoneURL
         reload()
     }
+
+    var isGuestScope: Bool { scope == Self.guestScope }
 
     func save(_ invoice: Invoice) -> Bool {
         do {
@@ -112,8 +137,18 @@ final class InvoiceStore: ObservableObject {
         do {
             recordHistory()
             for index in offsets {
-                try repository.delete(id: invoices[index].id)
+                try deleteLocally(id: invoices[index].id)
             }
+            reload()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func delete(_ invoice: Invoice) {
+        do {
+            recordHistory()
+            try deleteLocally(id: invoice.id)
             reload()
         } catch {
             errorMessage = error.localizedDescription
@@ -124,6 +159,27 @@ final class InvoiceStore: ObservableObject {
         _ = save(InvoiceOperations.duplicate(invoice))
     }
 
+    func switchScope(to newScope: String, migrateCurrent: Bool) {
+        guard newScope != scope else { return }
+        do {
+            let sourceRepository = repository
+            let migration = migrateCurrent ? try sourceRepository.getAll() : []
+            scope = newScope
+            repository = LocalInvoiceRepository(scope: newScope)
+            tombstoneURL = Self.defaultTombstoneURL(for: newScope)
+            for invoice in migration { try repository.save(invoice) }
+            if migrateCurrent {
+                for invoice in migration { try sourceRepository.delete(id: invoice.id) }
+            }
+            undoStack.removeAll()
+            redoStack.removeAll()
+            lastSyncAt = nil
+            reload()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func synchronize(using cloud: any CloudInvoiceServicing) async -> Bool {
         guard !isSyncing else { return false }
         isSyncing = true
@@ -132,14 +188,23 @@ final class InvoiceStore: ObservableObject {
         do {
             let localInvoices = try repository.getAll()
             let cloudInvoices = try await cloud.getAll()
+            var deletedIDs = try loadTombstones()
+            let deletedThisSync = deletedIDs
+
+            for id in deletedIDs {
+                try await cloud.delete(id: id)
+                deletedIDs.remove(id)
+                try persistTombstones(deletedIDs)
+            }
+
             let localByID = Dictionary(uniqueKeysWithValues: localInvoices.map { ($0.id, $0) })
             let cloudByID = Dictionary(uniqueKeysWithValues: cloudInvoices.map { ($0.id, $0) })
 
             for local in localInvoices {
                 if let remote = cloudByID[local.id] {
-                    if local.updatedAt > remote.updatedAt {
+                    if isNewer(local, than: remote) {
                         _ = try await cloud.update(local)
-                    } else if remote.updatedAt > local.updatedAt {
+                    } else if isNewer(remote, than: local) {
                         try repository.save(remote)
                     }
                 } else {
@@ -147,7 +212,7 @@ final class InvoiceStore: ObservableObject {
                 }
             }
 
-            for remote in cloudInvoices where localByID[remote.id] == nil {
+            for remote in cloudInvoices where localByID[remote.id] == nil && !deletedThisSync.contains(remote.id) {
                 try repository.save(remote)
             }
 
@@ -161,28 +226,64 @@ final class InvoiceStore: ObservableObject {
         }
     }
 
+    private func isNewer(_ candidate: Invoice, than other: Invoice) -> Bool {
+        if candidate.revision != other.revision { return candidate.revision > other.revision }
+        return candidate.updatedAt > other.updatedAt
+    }
+
+    private func deleteLocally(id: String) throws {
+        try repository.delete(id: id)
+        guard !isGuestScope else { return }
+        var tombstones = try loadTombstones()
+        tombstones.insert(id)
+        try persistTombstones(tombstones)
+    }
+
+    private func loadTombstones() throws -> Set<String> {
+        guard let tombstoneURL, FileManager.default.fileExists(atPath: tombstoneURL.path) else { return [] }
+        return Set(try JSONDecoder().decode([String].self, from: Data(contentsOf: tombstoneURL)))
+    }
+
+    private func persistTombstones(_ ids: Set<String>) throws {
+        guard let tombstoneURL else { return }
+        try FileManager.default.createDirectory(at: tombstoneURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(ids.sorted()).write(to: tombstoneURL, options: .atomic)
+    }
+
+    private static func defaultTombstoneURL(for scope: String) -> URL? {
+        guard scope != guestScope else { return nil }
+        let safeScope = scope.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "account"
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appending(path: "SingilanNa/accounts/\(safeScope)/deleted-invoices.json")
+    }
+
     func undo() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(invoices)
+        redoStack.append(currentSnapshot())
         replaceAll(with: previous)
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(invoices)
+        undoStack.append(currentSnapshot())
         replaceAll(with: next)
     }
 
     private func recordHistory() {
-        undoStack.append(invoices)
+        undoStack.append(currentSnapshot())
         if undoStack.count > 30 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
-    private func replaceAll(with snapshot: [Invoice]) {
+    private func currentSnapshot() -> HistorySnapshot {
+        HistorySnapshot(invoices: invoices, tombstones: (try? loadTombstones()) ?? [])
+    }
+
+    private func replaceAll(with snapshot: HistorySnapshot) {
         do {
             for invoice in try repository.getAll() { try repository.delete(id: invoice.id) }
-            for invoice in snapshot { try repository.save(invoice) }
+            for invoice in snapshot.invoices { try repository.save(invoice) }
+            try persistTombstones(snapshot.tombstones)
             reload()
         } catch {
             errorMessage = error.localizedDescription

@@ -17,7 +17,13 @@ struct Singilan_AppApp: App {
             InvoiceListView()
                 .environmentObject(invoiceStore)
                 .environmentObject(accountStore)
-                .task { await accountStore.refresh() }
+                .task {
+                    await accountStore.refresh()
+                    if let user = accountStore.user {
+                        invoiceStore.switchScope(to: user.id, migrateCurrent: false)
+                        _ = await invoiceStore.synchronize(using: CloudInvoiceService(client: APIClient(baseURL: AppEnvironment.apiBaseURL)))
+                    }
+                }
         }
     }
 }

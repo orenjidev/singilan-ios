@@ -6,6 +6,7 @@ struct AccountView: View {
     @EnvironmentObject private var invoiceStore: InvoiceStore
     @State private var username = ""
     @State private var code = ""
+    @State private var isChoosingGuestMigration = false
 
     var body: some View {
         NavigationStack {
@@ -29,7 +30,11 @@ struct AccountView: View {
                         Button {
                             Task {
                                 if await accountStore.login(username: username, code: code) {
-                                    _ = await invoiceStore.synchronize(using: CloudInvoiceService(client: APIClient(baseURL: AppEnvironment.apiBaseURL)))
+                                    if invoiceStore.isGuestScope && !invoiceStore.invoices.isEmpty {
+                                        isChoosingGuestMigration = true
+                                    } else {
+                                        await connectToSignedInAccount(migrateGuestInvoices: false)
+                                    }
                                 }
                             }
                         } label: {
@@ -40,7 +45,12 @@ struct AccountView: View {
                         }
                         .disabled(accountStore.isWorking || username.count < 3 || code.count != 6)
                     } else {
-                        Button("Sign out", role: .destructive) { Task { await accountStore.logout() } }
+                        Button("Sign out", role: .destructive) {
+                            Task {
+                                invoiceStore.switchScope(to: InvoiceStore.guestScope, migrateCurrent: false)
+                                await accountStore.logout()
+                            }
+                        }
                             .buttonStyle(.bordered)
                     }
 
@@ -76,6 +86,23 @@ struct AccountView: View {
             .alert("Account error", isPresented: Binding(get: { accountStore.errorMessage != nil }, set: { if !$0 { accountStore.errorMessage = nil } })) {
                 Button("OK") { accountStore.errorMessage = nil }
             } message: { Text(accountStore.errorMessage ?? "Unknown error") }
+            .confirmationDialog(
+                "Move guest invoices to this account?",
+                isPresented: $isChoosingGuestMigration,
+                titleVisibility: .visible
+            ) {
+                Button("Move guest invoices") { Task { await connectToSignedInAccount(migrateGuestInvoices: true) } }
+                Button("Keep guest invoices separate") { Task { await connectToSignedInAccount(migrateGuestInvoices: false) } }
+                Button("Cancel", role: .cancel) { Task { await accountStore.logout() } }
+            } message: {
+                Text("Keeping them separate prevents invoices from one account being uploaded to another account.")
+            }
         }
+    }
+
+    private func connectToSignedInAccount(migrateGuestInvoices: Bool) async {
+        guard let user = accountStore.user else { return }
+        invoiceStore.switchScope(to: user.id, migrateCurrent: migrateGuestInvoices)
+        _ = await invoiceStore.synchronize(using: CloudInvoiceService(client: APIClient(baseURL: AppEnvironment.apiBaseURL)))
     }
 }

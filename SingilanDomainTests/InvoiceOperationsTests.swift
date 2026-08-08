@@ -92,11 +92,73 @@ final class InvoiceStoreHistoryTests: XCTestCase {
         XCTAssertEqual(Set(store.invoices.map(\.id)), ["shared", "remote"])
         XCTAssertEqual(updatedTitles, ["Local newest"])
     }
+
+    func testSyncPropagatesPersistedDeletionWithoutResurrectingInvoice() async throws {
+        let invoice = Invoice(id: "deleted", title: "Delete me")
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let tombstoneURL = directory.appending(path: "deleted.json")
+        let repository = LocalInvoiceRepository(fileURL: nil, seed: [invoice])
+        let cloud = MockCloudInvoiceService(invoices: [invoice])
+        let store = InvoiceStore(repository: repository, scope: "account-1", tombstoneURL: tombstoneURL)
+
+        store.delete(invoice)
+        XCTAssertTrue(store.invoices.isEmpty)
+        let succeeded = await store.synchronize(using: cloud)
+        let deletedIDs = await cloud.deletedIDs()
+
+        XCTAssertTrue(succeeded)
+        XCTAssertTrue(store.invoices.isEmpty)
+        XCTAssertEqual(deletedIDs, ["deleted"])
+    }
+
+    func testUndoDeletionAlsoRestoresCloudTombstoneState() async {
+        let invoice = Invoice(id: "restored", title: "Restore me")
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let repository = LocalInvoiceRepository(fileURL: nil, seed: [invoice])
+        let cloud = MockCloudInvoiceService(invoices: [invoice])
+        let store = InvoiceStore(
+            repository: repository,
+            scope: "account-1",
+            tombstoneURL: directory.appending(path: "deleted.json")
+        )
+
+        store.delete(invoice)
+        store.undo()
+        let succeeded = await store.synchronize(using: cloud)
+        let deletedIDs = await cloud.deletedIDs()
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(store.invoices.map(\.id), ["restored"])
+        XCTAssertTrue(deletedIDs.isEmpty)
+    }
+
+    func testServiceChargeUsesRegularItemSubtotalsAsWeights() {
+        let invoice = Invoice(
+            title: "Weighted service",
+            participants: ["Ana", "Ben", "Cal"],
+            items: [
+                InvoiceItem(name: "Ana meal", price: 200, shares: ["Ana": true]),
+                InvoiceItem(name: "Shared meal", price: 200, shares: ["Ana": true, "Ben": true])
+            ]
+        )
+
+        let charged = InvoiceOperations.applyingServiceCharge(percent: 10, to: invoice)
+        let service = try! XCTUnwrap(charged.items.first(where: \.isService))
+
+        XCTAssertEqual(service.amount, 40)
+        XCTAssertEqual(service.shares, ["Ana": true, "Ben": true, "Cal": false])
+        XCTAssertEqual(service.weights, ["Ana": 300, "Ben": 100])
+        let balances = BillSplitter.balances(for: charged)
+        XCTAssertEqual(balances.first(where: { $0.userID == "Ana" })?.owed, 330)
+        XCTAssertEqual(balances.first(where: { $0.userID == "Ben" })?.owed, 110)
+        XCTAssertEqual(balances.first(where: { $0.userID == "Cal" })?.owed, 0)
+    }
 }
 
 private actor MockCloudInvoiceService: CloudInvoiceServicing {
     private var invoices: [Invoice]
     private var updates: [Invoice] = []
+    private var deletions: [String] = []
 
     init(invoices: [Invoice]) { self.invoices = invoices }
 
@@ -109,5 +171,10 @@ private actor MockCloudInvoiceService: CloudInvoiceServicing {
         updates.append(invoice)
         return invoice
     }
+    func delete(id: String) async throws {
+        deletions.append(id)
+        invoices.removeAll { $0.id == id }
+    }
     func updatedTitles() -> [String] { updates.map(\.title) }
+    func deletedIDs() -> [String] { deletions }
 }

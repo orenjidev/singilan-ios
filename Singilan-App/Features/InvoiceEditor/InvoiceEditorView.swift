@@ -182,6 +182,7 @@ struct InvoiceEditorView: View {
         normalizeParticipantsAndAssignments()
         updateServiceCharge(percent: desiredServicePercent)
         invoice.updatedAt = .now
+        invoice.revision += 1
         if invoiceStore.save(invoice), isNew {
             dismiss()
         }
@@ -193,14 +194,7 @@ struct InvoiceEditorView: View {
     }
 
     private func updateServiceCharge(percent: Decimal) {
-        invoice.items.removeAll(identifiedByServiceCharge: true)
-        guard percent > 0, invoice.regularSubtotal > 0 else { return }
-        invoice.items.append(InvoiceItem(
-            name: "Service charge",
-            price: invoice.regularSubtotal * percent / 100,
-            shares: shareMapForAllParticipants(),
-            isServiceCharge: true
-        ))
+        invoice = InvoiceOperations.applyingServiceCharge(percent: percent, to: invoice)
     }
 
     private func participantBinding(at index: Int) -> Binding<String> {
@@ -286,12 +280,6 @@ struct InvoiceEditorView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-}
-
-private extension Array where Element == InvoiceItem {
-    mutating func removeAll(identifiedByServiceCharge: Bool) {
-        removeAll { $0.isServiceCharge == identifiedByServiceCharge }
     }
 }
 
