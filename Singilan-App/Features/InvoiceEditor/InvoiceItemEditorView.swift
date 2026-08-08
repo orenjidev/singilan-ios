@@ -54,6 +54,9 @@ struct InvoiceItemEditorView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .singilanCanvas()
+        .tint(SingilanTheme.green)
         .navigationTitle(item.name.isEmpty ? "New Item" : item.name)
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -11,28 +11,48 @@ struct GrandSummaryView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
+        ScrollView {
+            VStack(spacing: 17) {
+                SingilanCard {
+                    VStack(spacing: 5) {
                     Text(openInvoices.reduce(Decimal.zero) { $0 + $1.total }, format: .currency(code: "PHP"))
-                        .font(.largeTitle.bold()).foregroundStyle(.tint)
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
                     Text("Across \(openInvoices.count) open invoice\(openInvoices.count == 1 ? "" : "s")")
                         .foregroundStyle(.secondary)
-                }.padding(.vertical, 8)
-            }
+                    }.frame(maxWidth: .infinity).padding(22)
+                }
 
-            Section("Combined amounts due") {
+                SingilanSectionTitle(text: "Combined amounts due")
+                SingilanCard {
                 ForEach(totals, id: \.0) { participant, amount in
-                    LabeledContent(participant) { Text(amount, format: .currency(code: "PHP")).fontWeight(.semibold) }
+                    HStack(spacing: 12) {
+                        ParticipantAvatar(name: participant, size: 39)
+                        Text(participant).fontWeight(.semibold)
+                        Spacer()
+                        Text(amount, format: .currency(code: "PHP")).fontWeight(.bold)
+                    }.padding(14)
+                    if participant != totals.last?.0 { SingilanDivider() }
                 }
-            }
+                }
 
-            Section("Open invoices") {
+                SingilanSectionTitle(text: "By invoice")
+                SingilanCard {
                 ForEach(openInvoices) { invoice in
-                    LabeledContent(invoice.title) { Text(invoice.total, format: .currency(code: invoice.currency)) }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(invoice.title).fontWeight(.semibold)
+                            Text("Open · \(invoice.normalizedParticipants.count) people").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(invoice.total, format: .currency(code: invoice.currency)).fontWeight(.semibold)
+                    }.padding(14)
+                    if invoice.id != openInvoices.last?.id { SingilanDivider() }
+                }
                 }
             }
+            .padding(16)
         }
+        .singilanCanvas()
         .navigationTitle("Grand Summary")
         .overlay {
             if openInvoices.isEmpty {

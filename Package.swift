@@ -9,7 +9,7 @@ let package = Package(
         .target(
             name: "SingilanDomain",
             path: "Singilan-App",
-            exclude: ["Assets.xcassets", "Features", "Networking", "Services", "Singilan_AppApp.swift"],
+            exclude: ["Assets.xcassets", "Design", "Features", "Networking", "Services", "Singilan_AppApp.swift"],
             sources: ["Models", "Domain", "Repositories"]
         ),
         .testTarget(

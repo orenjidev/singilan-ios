@@ -6,7 +6,8 @@ struct InvoiceListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            ZStack(alignment: .bottomTrailing) {
+                SingilanTheme.canvas.ignoresSafeArea()
                 if invoiceStore.invoices.isEmpty {
                     ContentUnavailableView(
                         "No invoices yet",
@@ -14,44 +15,61 @@ struct InvoiceListView: View {
                         description: Text("Create a bill and split it with your group.")
                     )
                 } else {
-                    List {
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            HStack(alignment: .bottom) {
+                                Text("Singilan Na")
+                                    .font(.largeTitle.bold())
+                                Spacer()
+                                ParticipantAvatar(name: "Orenji", size: 38)
+                            }
+
+                            HStack(spacing: 9) {
+                                NavigationLink(destination: GrandSummaryView()) {
+                                    Label("Grand summary", systemImage: "sum")
+                                }
+                                Spacer()
+                                Button("Undo", systemImage: "arrow.uturn.backward") { invoiceStore.undo() }
+                                    .disabled(!invoiceStore.canUndo)
+                                Button("Redo", systemImage: "arrow.uturn.forward") { invoiceStore.redo() }
+                                    .disabled(!invoiceStore.canRedo)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+
+                            SingilanSectionTitle(text: "Your invoices")
+                            SingilanCard {
                         ForEach(invoiceStore.invoices) { invoice in
                             NavigationLink(value: invoice) {
                                 InvoiceRow(invoice: invoice, needsSync: true)
                             }
-                            .swipeActions(edge: .leading) {
-                                Button("Duplicate", systemImage: "plus.square.on.square") {
-                                    invoiceStore.duplicate(invoice)
-                                }
-                                .tint(.blue)
+                            .buttonStyle(.plain)
+                            if invoice.id != invoiceStore.invoices.last?.id { SingilanDivider() }
+                        }
                             }
                         }
-                        .onDelete(perform: invoiceStore.delete)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 100)
                     }
                 }
+
+                Button {
+                    isCreatingInvoice = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
+                        .frame(width: 58, height: 58)
+                        .background(SingilanTheme.green, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                        .shadow(color: SingilanTheme.green.opacity(0.34), radius: 14, y: 8)
+                }
+                .padding(22)
             }
-            .navigationTitle("Singilan Na")
+            .tint(SingilanTheme.green)
+            .navigationTitle("")
+            .navigationBarHidden(true)
             .navigationDestination(for: Invoice.self) { invoice in
                 InvoiceEditorView(invoice: invoice)
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink(destination: GrandSummaryView()) {
-                        Label("Grand summary", systemImage: "sum")
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("New invoice", systemImage: "plus") {
-                        isCreatingInvoice = true
-                    }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button("Undo", systemImage: "arrow.uturn.backward") { invoiceStore.undo() }
-                        .disabled(!invoiceStore.canUndo)
-                    Spacer()
-                    Button("Redo", systemImage: "arrow.uturn.forward") { invoiceStore.redo() }
-                        .disabled(!invoiceStore.canRedo)
-                }
             }
             .sheet(isPresented: $isCreatingInvoice) {
                 NavigationStack {
@@ -80,10 +98,15 @@ private struct InvoiceRow: View {
     let needsSync: Bool
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            Image(systemName: "list.bullet.rectangle.portrait")
+                .font(.title3)
+                .foregroundStyle(SingilanTheme.green)
+                .frame(width: 43, height: 43)
+                .background(SingilanTheme.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
             VStack(alignment: .leading, spacing: 5) {
                 Text(invoice.title).font(.headline)
-                Text(invoice.updatedAt, format: .relative(presentation: .named))
+                Text("\(invoice.normalizedParticipants.count) people · \(invoice.items.count) items")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -92,13 +115,13 @@ private struct InvoiceRow: View {
                 Text(invoice.total, format: .currency(code: invoice.currency))
                     .fontWeight(.semibold)
                 if needsSync {
-                    Label(invoice.status.label, systemImage: invoice.status == .open ? "circle.fill" : "circle")
+                    Text(invoice.status.label)
                         .font(.caption2)
                         .foregroundStyle(invoice.status == .open ? .green : .secondary)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(14)
     }
 }
 

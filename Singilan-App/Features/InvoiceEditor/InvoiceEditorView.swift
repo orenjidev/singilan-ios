@@ -17,90 +17,136 @@ struct InvoiceEditorView: View {
     }
 
     var body: some View {
-        Form {
-            Section("Invoice") {
-                TextField("Title", text: $invoice.title)
-                Picker("Status", selection: $invoice.status) {
-                    ForEach(InvoiceStatus.allCases) { status in
-                        Text(status.label).tag(status)
+        ScrollView {
+            VStack(spacing: 17) {
+                VStack(alignment: .leading, spacing: 7) {
+                    SingilanSectionTitle(text: "Invoice name")
+                    TextField("Friday Dinner", text: $invoice.title).singilanField()
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    SingilanSectionTitle(text: "Status")
+                    Picker("Status", selection: $invoice.status) {
+                        ForEach(InvoiceStatus.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    SingilanSectionTitle(text: "People")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 13) {
+                            ForEach(invoice.participants.indices, id: \.self) { index in
+                                VStack(spacing: 5) {
+                                    ParticipantAvatar(name: invoice.participants[index], size: 48)
+                                    TextField("Name", text: participantBinding(at: index))
+                                        .font(.caption)
+                                        .multilineTextAlignment(.center)
+                                        .frame(width: 68)
+                                    Button(role: .destructive) {
+                                        removeParticipants(at: IndexSet(integer: index))
+                                    } label: { Image(systemName: "minus.circle.fill").font(.caption) }
+                                }
+                            }
+                            Button {
+                                invoice.participants.append("")
+                            } label: {
+                                VStack(spacing: 5) {
+                                    Image(systemName: "plus")
+                                        .font(.title3)
+                                        .frame(width: 48, height: 48)
+                                        .overlay(Circle().strokeBorder(SingilanTheme.green, style: StrokeStyle(lineWidth: 1.5, dash: [4])))
+                                    Text("Add").font(.caption)
+                                }
+                            }
+                            .disabled(invoice.participants.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                        }
                     }
                 }
-                LabeledContent("Total") {
-                    Text(invoice.total, format: .currency(code: invoice.currency))
-                }
-                TextField("Service charge %", value: $desiredServicePercent, format: .number)
-                    .keyboardType(.decimalPad)
-            }
 
-            Section("People") {
-                ForEach(invoice.participants.indices, id: \.self) { index in
-                    TextField("Name", text: participantBinding(at: index))
+                VStack(alignment: .leading, spacing: 8) {
+                    SingilanSectionTitle(text: "Items")
+                    SingilanCard {
+                        ForEach(Array(invoice.items.indices), id: \.self) { index in
+                            NavigationLink {
+                                InvoiceItemEditorView(item: $invoice.items[index], participants: invoice.normalizedParticipants)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(invoice.items[index].name.isEmpty ? "Untitled item" : invoice.items[index].name).fontWeight(.semibold)
+                                        Text(assignmentLabel(for: invoice.items[index])).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(invoice.items[index].amount, format: .currency(code: invoice.currency))
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(invoice.items[index].isCreditLine ? SingilanTheme.green : .primary)
+                                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                                }
+                                .padding(14)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu { Button("Delete", role: .destructive) { invoice.items.remove(at: index) } }
+                            if index < invoice.items.count - 1 { SingilanDivider() }
+                        }
+                        if !invoice.items.isEmpty { SingilanDivider() }
+                        Button("Add item, credit, or charge", systemImage: "plus") {
+                            invoice.items.append(InvoiceItem(name: "", shares: shareMapForAllParticipants()))
+                        }
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                    }
                 }
-                .onDelete(perform: removeParticipants)
-                Button("Add person", systemImage: "person.badge.plus") {
-                    invoice.participants.append("")
-                }
-                .disabled(invoice.participants.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-            }
 
-            Section("Items") {
-                ForEach($invoice.items) { $item in
-                    NavigationLink {
-                        InvoiceItemEditorView(item: $item, participants: invoice.normalizedParticipants)
-                    } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    SingilanSectionTitle(text: "Charges & payment")
+                    SingilanCard {
                         HStack {
-                            VStack(alignment: .leading) {
-                                Text(item.name.isEmpty ? "Untitled item" : item.name)
-                                Text(assignmentLabel(for: item))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Service charge").fontWeight(.semibold)
+                                Text("Calculated from regular item subtotal").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Text(item.amount, format: .currency(code: "PHP"))
-                                .foregroundStyle(item.isCreditLine ? .green : .primary)
+                            TextField("0", value: $desiredServicePercent, format: .number)
+                                .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 50)
+                            Text("%")
+                        }.padding(14)
+                        SingilanDivider()
+                        if let qrData = paymentQRData, let image = UIImage(data: qrData) {
+                            HStack {
+                                Image(uiImage: image).resizable().interpolation(.none).scaledToFit().frame(width: 58, height: 58)
+                                TextField("GCash, Maya, or bank", text: paymentQRLabel)
+                                Button("Remove", role: .destructive) { invoice.paymentQr = nil; invoice.paymentQrLabel = nil }
+                            }.padding(14)
+                        } else {
+                            PhotosPicker(selection: $selectedQRItem, matching: .images) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Payment QR").fontWeight(.semibold).foregroundStyle(.primary)
+                                        Text("Shown on the shared bill").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("Add").foregroundStyle(SingilanTheme.green)
+                                }.padding(14)
+                            }
                         }
                     }
                 }
-                .onDelete { invoice.items.remove(atOffsets: $0) }
-                Button("Add item", systemImage: "plus") {
-                    invoice.items.append(InvoiceItem(name: "", shares: shareMapForAllParticipants()))
-                }
-            }
 
-            Section("Payment QR") {
-                if let qrData = paymentQRData, let image = UIImage(data: qrData) {
-                    HStack {
-                        Image(uiImage: image)
-                            .resizable().interpolation(.none).scaledToFit().frame(maxHeight: 150)
-                        Spacer()
-                        Button("Remove", role: .destructive) {
-                            invoice.paymentQr = nil
-                            invoice.paymentQrLabel = nil
-                        }
-                    }
-                    TextField("Label (GCash, Maya, bank)", text: paymentQRLabel)
-                } else {
-                    PhotosPicker(selection: $selectedQRItem, matching: .images) {
-                        Label("Choose payment QR", systemImage: "qrcode.viewfinder")
-                    }
-                }
-            }
-
-            if !invoice.participants.isEmpty {
-                Section("Split preview") {
-                    ForEach(BillSplitter.balances(for: invoice)) { balance in
-                        LabeledContent(balance.userID.isEmpty ? "Unnamed person" : balance.userID) {
-                            Text(balance.owed, format: .currency(code: invoice.currency))
-                                .fontWeight(.semibold)
-                        }
-                    }
-
-                    NavigationLink("View full summary") {
+                if !invoice.normalizedParticipants.isEmpty {
+                    NavigationLink {
                         InvoiceSummaryView(invoice: invoice)
+                    } label: {
+                        Text("Review split").fontWeight(.bold).foregroundStyle(.white)
+                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .background(SingilanTheme.green, in: RoundedRectangle(cornerRadius: 15))
                     }
                 }
             }
+            .padding(16)
+            .padding(.bottom, 24)
         }
+        .singilanCanvas()
         .navigationTitle(isNew ? "New Invoice" : invoice.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

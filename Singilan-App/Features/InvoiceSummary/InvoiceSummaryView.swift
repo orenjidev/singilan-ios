@@ -10,33 +10,39 @@ struct InvoiceSummaryView: View {
     private var balances: [ParticipantBalance] { BillSplitter.balances(for: invoice) }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(invoice.title).font(.title2.bold())
-                    Text(invoice.total, format: .currency(code: invoice.currency))
-                        .font(.largeTitle.bold()).foregroundStyle(.tint)
-                    Text("Split between \(invoice.participants.count) people").foregroundStyle(.secondary)
-                }.padding(.vertical, 8)
-            }
-
-            Section("Amounts due") {
-                ForEach(balances) { balance in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(balance.userID.isEmpty ? "Unnamed person" : balance.userID).font(.headline)
-                            Spacer()
-                            Text(balance.owed, format: .currency(code: invoice.currency)).font(.headline)
-                        }
-                        if balance.paid != 0 {
-                            Text("Paid \(balance.paid, format: .currency(code: invoice.currency)) · Balance \(balance.balance, format: .currency(code: invoice.currency))")
+        ScrollView {
+            VStack(spacing: 17) {
+                SingilanCard {
+                    VStack(spacing: 5) {
+                        Text(invoice.title).font(.subheadline).foregroundStyle(.secondary)
+                        Text(invoice.total, format: .currency(code: invoice.currency))
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                        if invoice.serviceChargeAmount > 0 {
+                            Text("Includes \(invoice.serviceChargeAmount, format: .currency(code: invoice.currency)) service charge")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                    }.padding(.vertical, 3)
+                    }.frame(maxWidth: .infinity).padding(22)
                 }
-            }
 
-            Section("Items") {
+                SingilanSectionTitle(text: "Amounts due")
+                SingilanCard {
+                ForEach(balances) { balance in
+                    HStack(spacing: 12) {
+                        ParticipantAvatar(name: balance.userID, size: 39)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(balance.userID).fontWeight(.semibold)
+                            Text(balance.paid == 0 ? "Amount due" : "Paid \(balance.paid, format: .currency(code: invoice.currency))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(balance.owed, format: .currency(code: invoice.currency)).fontWeight(.bold)
+                    }.padding(14)
+                    if balance.id != balances.last?.id { SingilanDivider() }
+                }
+                }
+
+                SingilanSectionTitle(text: "Items")
+                SingilanCard {
                 ForEach(invoice.items) { item in
                     HStack {
                         VStack(alignment: .leading) {
@@ -47,13 +53,21 @@ struct InvoiceSummaryView: View {
                         Spacer()
                         Text(item.amount, format: .currency(code: invoice.currency))
                     }
+                    .padding(14)
+                    if item.id != invoice.items.last?.id { SingilanDivider() }
+                }
+                }
+
+                HStack(spacing: 9) {
+                    actionButton("Share", icon: "square.and.arrow.up") { exportPNG() }
+                    actionButton("CSV", icon: "tablecells") { exportCSV() }
+                    actionButton("Duplicate", icon: "plus.square.on.square") { invoiceStore.duplicate(invoice) }
                 }
             }
-
-            if invoice.participants.isEmpty {
-                ContentUnavailableView("No split yet", systemImage: "person.2.slash", description: Text("Add people to calculate individual amounts."))
-            }
+            .padding(16)
+            .padding(.bottom, 24)
         }
+        .singilanCanvas()
         .navigationTitle("Summary")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -69,6 +83,18 @@ struct InvoiceSummaryView: View {
         .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
             Button("OK") { exportError = nil }
         } message: { Text(exportError ?? "Unknown error") }
+    }
+
+    private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.title3).foregroundStyle(SingilanTheme.green)
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.primary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(SingilanTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(SingilanTheme.border))
+        }
     }
 
     private func exportCSV() {
