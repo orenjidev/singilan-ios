@@ -2,6 +2,20 @@ import XCTest
 @testable import SingilanDomain
 
 final class BillSplitterTests: XCTestCase {
+    func testBlankAndDuplicateParticipantsDoNotCrashOrDuplicateBalances() {
+        let invoice = Invoice(
+            title: "Editing",
+            participants: ["", "Ana", "", " Ana ", "Ben", "Ben"],
+            items: [InvoiceItem(name: "Meal", price: 100, shares: ["Ana": true, "Ben": true])]
+        )
+
+        let balances = BillSplitter.balances(for: invoice)
+
+        XCTAssertEqual(balances.map(\.userID), ["Ana", "Ben"])
+        XCTAssertEqual(balances.map(\.owed), [50, 50])
+        XCTAssertEqual(BillSplitter.paidStatus(for: invoice).count, 2)
+    }
+
     func testEvenSplitTracksOwedPaidAndBalance() {
         let invoice = Invoice(
             title: "Dinner",

@@ -87,7 +87,7 @@ struct InvoiceItemEditorView: View {
 
     private func toggleShare(_ participant: String) {
         if item.isCreditLine {
-            item.shares = Dictionary(uniqueKeysWithValues: participants.map { ($0, $0 == participant) })
+            item.shares = participants.reduce(into: [:]) { $0[$1] = ($1 == participant) }
             item.payments = [:]
             item.weights = nil
             return

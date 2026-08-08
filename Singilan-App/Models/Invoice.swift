@@ -116,6 +116,17 @@ struct Invoice: Codable, Identifiable, Hashable {
         return serviceChargeAmount / regularSubtotal * 100
     }
 
+    /// Participant names that are safe to use as dictionary and SwiftUI IDs.
+    /// Empty and repeated names can exist temporarily while the editor is open.
+    var normalizedParticipants: [String] {
+        var seen = Set<String>()
+        return participants.compactMap { rawName in
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name).inserted else { return nil }
+            return name
+        }
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)

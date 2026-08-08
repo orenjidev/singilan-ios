@@ -39,15 +39,15 @@ enum InvoiceOperations {
             "Name,Paid,Owed,Balance"
         ]
 
-        let balances = Dictionary(uniqueKeysWithValues: BillSplitter.balances(for: invoice).map { ($0.userID, $0) })
-        for participant in invoice.participants {
+        let balances = BillSplitter.balances(for: invoice).reduce(into: [String: ParticipantBalance]()) { $0[$1.userID] = $1 }
+        for participant in invoice.normalizedParticipants {
             let row = balances[participant] ?? ParticipantBalance(userID: participant, owed: 0, paid: 0)
             lines.append([escape(participant), amount(row.paid), amount(row.owed), amount(row.balance)].joined(separator: ","))
         }
 
         lines += ["", "Items", "Name,Amount,Shared With,Type"]
         for item in invoice.items {
-            let sharedWith = invoice.participants.filter { item.shares[$0] == true }.joined(separator: "; ")
+            let sharedWith = invoice.normalizedParticipants.filter { item.shares[$0] == true }.joined(separator: "; ")
             let type = item.isCreditLine ? "credit" : item.isService ? "service" : "item"
             lines.append([escape(item.name), amount(item.amount), escape(sharedWith), type].joined(separator: ","))
         }

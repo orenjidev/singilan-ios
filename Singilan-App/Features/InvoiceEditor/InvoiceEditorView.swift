@@ -40,12 +40,13 @@ struct InvoiceEditorView: View {
                 Button("Add person", systemImage: "person.badge.plus") {
                     invoice.participants.append("")
                 }
+                .disabled(invoice.participants.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
             }
 
             Section("Items") {
                 ForEach($invoice.items) { $item in
                     NavigationLink {
-                        InvoiceItemEditorView(item: $item, participants: invoice.participants)
+                        InvoiceItemEditorView(item: $item, participants: invoice.normalizedParticipants)
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {
@@ -132,6 +133,7 @@ struct InvoiceEditorView: View {
     }
 
     private func save() {
+        normalizeParticipantsAndAssignments()
         updateServiceCharge(percent: desiredServicePercent)
         invoice.updatedAt = .now
         if invoiceStore.save(invoice), isNew {
@@ -186,7 +188,33 @@ struct InvoiceEditorView: View {
     }
 
     private func shareMapForAllParticipants() -> [String: Bool] {
-        Dictionary(uniqueKeysWithValues: invoice.participants.filter { !$0.isEmpty }.map { ($0, true) })
+        invoice.normalizedParticipants.reduce(into: [:]) { $0[$1] = true }
+    }
+
+    private func normalizeParticipantsAndAssignments() {
+        let original = invoice.participants
+        let normalized = invoice.normalizedParticipants
+
+        for itemIndex in invoice.items.indices {
+            var shares: [String: Bool] = [:]
+            var payments: [String: Bool] = [:]
+            var weights: [String: Decimal] = [:]
+
+            for oldName in original {
+                let name = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard normalized.contains(name) else { continue }
+                shares[name] = (shares[name] == true) || (invoice.items[itemIndex].shares[oldName] == true)
+                payments[name] = (payments[name] == true) || (invoice.items[itemIndex].payments[oldName] == true)
+                if let weight = invoice.items[itemIndex].weights?[oldName] {
+                    weights[name] = max(weights[name] ?? 0, weight)
+                }
+            }
+
+            invoice.items[itemIndex].shares = shares
+            invoice.items[itemIndex].payments = payments
+            invoice.items[itemIndex].weights = weights.isEmpty ? nil : weights
+        }
+        invoice.participants = normalized
     }
 
     private var paymentQRLabel: Binding<String> {

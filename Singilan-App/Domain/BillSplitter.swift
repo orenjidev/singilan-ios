@@ -12,11 +12,12 @@ struct ParticipantBalance: Identifiable, Hashable {
 enum BillSplitter {
     /// Direct Swift port of `calculateInvoiceSplit` from the web application.
     static func balances(for invoice: Invoice) -> [ParticipantBalance] {
-        var owed = Dictionary(uniqueKeysWithValues: invoice.participants.map { ($0, Decimal.zero) })
-        var paid = Dictionary(uniqueKeysWithValues: invoice.participants.map { ($0, Decimal.zero) })
+        let participants = invoice.normalizedParticipants
+        var owed = participants.reduce(into: [String: Decimal]()) { $0[$1] = 0 }
+        var paid = participants.reduce(into: [String: Decimal]()) { $0[$1] = 0 }
 
         for item in invoice.items {
-            let sharers = invoice.participants.filter { item.shares[$0] == true }
+            let sharers = participants.filter { item.shares[$0] == true }
             guard !sharers.isEmpty else { continue }
 
             let weightedSharers = sharers.filter { (item.weights?[$0] ?? 0) > 0 }
@@ -37,21 +38,21 @@ enum BillSplitter {
             }
         }
 
-        return invoice.participants.map {
+        return participants.map {
             ParticipantBalance(userID: $0, owed: owed[$0] ?? 0, paid: paid[$0] ?? 0)
         }
     }
 
     static func amountsDue(for invoice: Invoice) -> [String: Decimal] {
-        Dictionary(uniqueKeysWithValues: balances(for: invoice).map { ($0.userID, $0.owed) })
+        balances(for: invoice).reduce(into: [:]) { $0[$1.userID] = $1.owed }
     }
 
     static func paidStatus(for invoice: Invoice) -> [String: Bool] {
-        Dictionary(uniqueKeysWithValues: invoice.participants.map { participant in
+        invoice.normalizedParticipants.reduce(into: [String: Bool]()) { result, participant in
             let hasUnpaidItem = invoice.items.contains {
                 $0.shares[participant] == true && $0.payments[participant] != true && !$0.isCreditLine
             }
-            return (participant, !hasUnpaidItem)
-        })
+            result[participant] = !hasUnpaidItem
+        }
     }
 }
