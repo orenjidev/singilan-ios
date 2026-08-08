@@ -75,4 +75,39 @@ final class InvoiceStoreHistoryTests: XCTestCase {
         store.redo()
         XCTAssertEqual(store.invoices.map(\.title), ["Dinner"])
     }
+
+    func testSyncUploadsNewerLocalAndDownloadsCloudOnlyInvoice() async {
+        let now = Date()
+        let local = Invoice(id: "shared", title: "Local newest", updatedAt: now)
+        let remoteOld = Invoice(id: "shared", title: "Remote old", updatedAt: now.addingTimeInterval(-60))
+        let remoteOnly = Invoice(id: "remote", title: "From cloud", updatedAt: now)
+        let repository = LocalInvoiceRepository(fileURL: nil, seed: [local])
+        let cloud = MockCloudInvoiceService(invoices: [remoteOld, remoteOnly])
+        let store = InvoiceStore(repository: repository)
+
+        let succeeded = await store.synchronize(using: cloud)
+        let updatedTitles = await cloud.updatedTitles()
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(Set(store.invoices.map(\.id)), ["shared", "remote"])
+        XCTAssertEqual(updatedTitles, ["Local newest"])
+    }
+}
+
+private actor MockCloudInvoiceService: CloudInvoiceServicing {
+    private var invoices: [Invoice]
+    private var updates: [Invoice] = []
+
+    init(invoices: [Invoice]) { self.invoices = invoices }
+
+    func getAll() async throws -> [Invoice] { invoices }
+    func create(_ invoice: Invoice) async throws -> Invoice {
+        invoices.append(invoice)
+        return invoice
+    }
+    func update(_ invoice: Invoice) async throws -> Invoice {
+        updates.append(invoice)
+        return invoice
+    }
+    func updatedTitles() -> [String] { updates.map(\.title) }
 }

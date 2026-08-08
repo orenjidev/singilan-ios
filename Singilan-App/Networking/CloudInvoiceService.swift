@@ -1,6 +1,6 @@
 import Foundation
 
-struct CloudInvoiceService: Sendable {
+struct CloudInvoiceService: CloudInvoiceServicing, Sendable {
     let client: APIClient
 
     func getAll() async throws -> [Invoice] {

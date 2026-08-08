@@ -3,6 +3,7 @@ import SwiftUI
 struct AccountView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var accountStore: AccountStore
+    @EnvironmentObject private var invoiceStore: InvoiceStore
     @State private var username = ""
     @State private var code = ""
 
@@ -26,7 +27,11 @@ struct AccountView: View {
                             SecureField("6-digit code", text: $code).keyboardType(.numberPad).singilanField()
                         }
                         Button {
-                            Task { if await accountStore.login(username: username, code: code) { dismiss() } }
+                            Task {
+                                if await accountStore.login(username: username, code: code) {
+                                    _ = await invoiceStore.synchronize(using: CloudInvoiceService(client: APIClient(baseURL: AppEnvironment.apiBaseURL)))
+                                }
+                            }
                         } label: {
                             Text(accountStore.isWorking ? "Signing in…" : "Sign in")
                                 .fontWeight(.bold).foregroundStyle(.white)
@@ -44,11 +49,23 @@ struct AccountView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Invoice synchronization").fontWeight(.semibold)
-                                Text("Available after backend v1 is deployed").font(.caption).foregroundStyle(.secondary)
+                                if let lastSyncAt = invoiceStore.lastSyncAt {
+                                    Text("Last synced \(lastSyncAt, format: .relative(presentation: .named))").font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text(accountStore.user == nil ? "Sign in to sync invoices" : "Ready to synchronize").font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
-                            Text("Off").foregroundStyle(.secondary)
+                            if invoiceStore.isSyncing { ProgressView() }
+                            else { Text(accountStore.user == nil ? "Off" : "Ready").foregroundStyle(.secondary) }
                         }.padding(14)
+                    }
+                    if accountStore.user != nil {
+                        Button("Sync now", systemImage: "arrow.triangle.2.circlepath") {
+                            Task { _ = await invoiceStore.synchronize(using: CloudInvoiceService(client: APIClient(baseURL: AppEnvironment.apiBaseURL))) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(invoiceStore.isSyncing)
                     }
                 }.padding(16)
             }

@@ -82,7 +82,9 @@ struct InvoiceListView: View {
                 }
             }
             .sheet(isPresented: $isShowingAccount) {
-                AccountView().environmentObject(accountStore)
+                AccountView()
+                    .environmentObject(accountStore)
+                    .environmentObject(invoiceStore)
             }
             .alert("Couldn’t update invoices", isPresented: errorBinding) {
                 Button("OK") { invoiceStore.errorMessage = nil }

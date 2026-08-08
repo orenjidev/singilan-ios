@@ -7,6 +7,12 @@ protocol InvoiceRepository {
     func delete(id: String) throws
 }
 
+protocol CloudInvoiceServicing: Sendable {
+    func getAll() async throws -> [Invoice]
+    func create(_ invoice: Invoice) async throws -> Invoice
+    func update(_ invoice: Invoice) async throws -> Invoice
+}
+
 final class LocalInvoiceRepository: InvoiceRepository {
     private let fileURL: URL?
     private var memoryInvoices: [Invoice]
@@ -71,6 +77,8 @@ final class LocalInvoiceRepository: InvoiceRepository {
 final class InvoiceStore: ObservableObject {
     @Published private(set) var invoices: [Invoice] = []
     @Published var errorMessage: String?
+    @Published private(set) var isSyncing = false
+    @Published private(set) var lastSyncAt: Date?
     private let repository: any InvoiceRepository
     private var undoStack: [[Invoice]] = []
     private var redoStack: [[Invoice]] = []
@@ -114,6 +122,43 @@ final class InvoiceStore: ObservableObject {
 
     func duplicate(_ invoice: Invoice) {
         _ = save(InvoiceOperations.duplicate(invoice))
+    }
+
+    func synchronize(using cloud: any CloudInvoiceServicing) async -> Bool {
+        guard !isSyncing else { return false }
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            let localInvoices = try repository.getAll()
+            let cloudInvoices = try await cloud.getAll()
+            let localByID = Dictionary(uniqueKeysWithValues: localInvoices.map { ($0.id, $0) })
+            let cloudByID = Dictionary(uniqueKeysWithValues: cloudInvoices.map { ($0.id, $0) })
+
+            for local in localInvoices {
+                if let remote = cloudByID[local.id] {
+                    if local.updatedAt > remote.updatedAt {
+                        _ = try await cloud.update(local)
+                    } else if remote.updatedAt > local.updatedAt {
+                        try repository.save(remote)
+                    }
+                } else {
+                    _ = try await cloud.create(local)
+                }
+            }
+
+            for remote in cloudInvoices where localByID[remote.id] == nil {
+                try repository.save(remote)
+            }
+
+            reload()
+            lastSyncAt = .now
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func undo() {
