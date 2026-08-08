@@ -2,7 +2,9 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var invoiceStore: InvoiceStore
+    @EnvironmentObject private var accountStore: AccountStore
     @State private var isCreatingInvoice = false
+    @State private var isShowingAccount = false
 
     var body: some View {
         NavigationStack {
@@ -21,7 +23,9 @@ struct InvoiceListView: View {
                                 Text("Singilan Na")
                                     .font(.largeTitle.bold())
                                 Spacer()
-                                ParticipantAvatar(name: "Orenji", size: 38)
+                                Button { isShowingAccount = true } label: {
+                                    ParticipantAvatar(name: accountStore.user?.username ?? "Guest", size: 38)
+                                }
                             }
 
                             HStack(spacing: 9) {
@@ -77,6 +81,9 @@ struct InvoiceListView: View {
                         .environmentObject(invoiceStore)
                 }
             }
+            .sheet(isPresented: $isShowingAccount) {
+                AccountView().environmentObject(accountStore)
+            }
             .alert("Couldn’t update invoices", isPresented: errorBinding) {
                 Button("OK") { invoiceStore.errorMessage = nil }
             } message: {
@@ -128,4 +135,5 @@ private struct InvoiceRow: View {
 #Preview {
     InvoiceListView()
         .environmentObject(InvoiceStore.preview)
+        .environmentObject(AccountStore())
 }
